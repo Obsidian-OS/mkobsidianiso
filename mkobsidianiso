@@ -7,6 +7,8 @@ ISO_NAME="OBSIDIANOS" # config
 ISO_VERSION="1.0.0"   # config
 EXTRA_GRUB_CONFIG=""  # config
 BUSYBOX=""            # config
+EXTRA_BOOT_OPT=""     # config
+
 error() {
   echo "ERROR: $*" >&2
   exit 1
@@ -39,6 +41,7 @@ Config options:
   ISO_VERSION       ISO File Product Version
   EXTRA_GRUB_CONFIG Extra options like menu entries for GRUB
   BUSYBOX           Busybox binary path
+  EXTRA_BOOT_OPT    Extra boot options like $(quiet splash)
 
 Options:
   -k, --kernel    Specify kernel version (auto-detect if not provided)
@@ -46,8 +49,8 @@ Options:
   -v, --version   Show version
 
 Examples:
-  mkobsidianiso /path/to/rootfs output.iso
-  mkobsidianiso -k 6.12.62_1 rootfs.sfs output.iso
+  mkobsidianiso config.conf /path/to/rootfs output.iso
+  mkobsidianiso -k 6.12.62_1 config.conf rootfs.sfs output.iso
 
 EOF
 }
@@ -157,7 +160,14 @@ set timeout=5
 menuentry "$DISTRO" {
     search --no-floppy --set=root --file /live/system.sfs
     loopback loop0 (\$root)/live/system.sfs
-    linux (loop0)/boot/vmlinuz-$kernel root=/dev/sr0 rootfstype=iso9660 ro
+    linux (loop0)/boot/vmlinuz-$kernel root=/dev/sr0 rootfstype=iso9660 ro $EXTRA_BOOT_OPT
+    initrd (loop0)/boot/initramfs-$kernel.img
+    boot
+}
+menuentry "$DISTRO (nomodeset)" {
+    search --no-floppy --set=root --file /live/system.sfs
+    loopback loop0 (\$root)/live/system.sfs
+    linux (loop0)/boot/vmlinuz-$kernel root=/dev/sr0 rootfstype=iso9660 ro nomodeset $EXTRA_BOOT_OPT
     initrd (loop0)/boot/initramfs-$kernel.img
     boot
 }
