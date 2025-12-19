@@ -250,7 +250,7 @@ main() {
   fi
   extract_modules "$squashfs_file" "$kernel_version" "$iso_root/extras"
   info "Installing busybox..."
-  if command -v "$BUSYBOX" &>/dev/null; then
+  if [ -f "$BUSYBOX" ]; then
     cp "$BUSYBOX" "$iso_root/sbin/busybox"
   else
     if command -v busybox &>/dev/null; then
