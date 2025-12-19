@@ -35,7 +35,8 @@ The `<config>` file is sourced by the script and can define the following variab
 *   `ISO_VERSION`: The product version for the ISO file.
 *   `EXTRA_GRUB_CONFIG`: Additional GRUB menu entries or configuration.
 *   `BUSYBOX`: Path to the BusyBox binary.
-*   `EXTRA_BOOT_OPT`: Extra boot options to append like `quiet splash`
+*   `EXTRA_BOOT_OPT`: Extra boot options to append like `quiet splash`.
+*   `BINARIES`: Paths of binary files to copy to the system before booting and symlinking them.
 
 ### Example
 
