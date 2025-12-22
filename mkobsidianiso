@@ -166,14 +166,14 @@ set timeout=5
 menuentry "$DISTRO" {
     search --no-floppy --set=root --file /live/system.sfs
     loopback loop0 (\$root)/live/system.sfs
-    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=$ISO_NAME rootfstype=iso9660 ro $EXTRA_BOOT_OPT
+    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $EXTRA_BOOT_OPT
     initrd (loop0)/boot/initramfs-$kernel.img
     boot
 }
 menuentry "$DISTRO (nomodeset)" {
     search --no-floppy --set=root --file /live/system.sfs
     loopback loop0 (\$root)/live/system.sfs
-    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=$ISO_NAME rootfstype=iso9660 ro nomodeset $EXTRA_BOOT_OPT
+    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro nomodeset $EXTRA_BOOT_OPT
     initrd (loop0)/boot/initramfs-$kernel.img
     boot
 }
