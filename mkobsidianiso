@@ -302,7 +302,7 @@ create_grub_cfg() {
   local kernel="$2"
   local toramline=""
   local nontoramline=""
-  if [[ "$DEFAULT_TORAM" == "1" ]]; then
+  if [[ "$ENABLE_TORAM" == "1" ]]; then
     toramline = "obsidian.toram"
     nontoramline = ""
   else
