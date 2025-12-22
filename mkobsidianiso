@@ -2,15 +2,16 @@
 set -e
 VERSION="1.0.0"
 WORKDIR="/tmp/mkobsidianiso-$$"
-DISTRO="ObsidianOS"   # config
-ISO_NAME="OBSIDIANOS" # config
-ISO_VERSION="1.0.0"   # config
-EXTRA_GRUB_CONFIG=""  # config
-BUSYBOX=""            # config
-EXTRA_BOOT_OPT=""     # config
-BINARIES=""           # config
-EXTRA_MODULES=""      # config
-EXTRA_FILES=""        # config
+DISTRO="ObsidianOS"                        # config
+ISO_NAME="OBSIDIANOS"                      # config
+ISO_VERSION="1.0.0"                        # config
+EXTRA_GRUB_CONFIG=""                       # config
+BUSYBOX=""                                 # config
+EXTRA_BOOT_OPT=""                          # config
+BINARIES=""                                # config
+EXTRA_MODULES=""                           # config
+EXTRA_FILES=""                             # config
+MEMTEST_EFI="/boot/memtest86+/memtest.efi" # config
 error() {
   echo "ERROR: $*" >&2
   exit 1
@@ -179,9 +180,25 @@ fi
 echo "=> setting up loopback device"
 mknod /dev/loop0 b 7 0 2>/dev/null
 if has_opt "obsidian.toram"; then
-    echo "=> Copying system to RAM (this may take a moment)..."
-    mount -t tmpfs tmpfs /tmp
-    cp /live/system.sfs /tmp/system.sfs
+    echo "=> copying system to RAM (this may take a moment)..."
+    mount -t tmpfs tmpfs /tmp 2>/dev/null
+    SIZE=$(stat -c%s "/live/system.sfs")
+    SRC="/live/system.sfs"
+    if [ -f "$SRC" ]; then
+        SIZE=$(stat -c%s "$SRC")
+        echo "=> relocating $((SIZE / 1024 / 1024 / 1024))GiB to RAM..."
+        cp "$SRC" "/tmp/system.sfs" &
+        CP_PID=$!
+        while kill -0 $CP_PID 2>/dev/null; do
+            CUR=$(stat -c%s "/tmp/system.sfs" 2>/dev/null || echo 0)
+            PCT=$(( 100 * $CUR / $SIZE ))
+            BAR_WIDTH=$(( PCT / 5 ))
+            BAR=$(printf "%${BAR_WIDTH}s" | tr ' ' '#')
+            printf "\r=> progress: [%-25s] %d%%" "$BAR" "$PCT"
+            sleep 0.1
+        done
+        echo -e "\n=> copy complete. mounting from RAM..."
+    fi
     losetup /dev/loop0 /tmp/system.sfs
 else
     losetup /dev/loop0 /live/system.sfs
@@ -271,7 +288,7 @@ for f in /mnt/livecd/extras/binaries/*; do
 done
 echo "=> giving the job to the system. bye from mkobsidianiso"
 if has_opt "obsidian.shell"; then
-    echo "=> Dropping to shell before switching to the system. Type 'exit' to continue boot."
+    echo "=> dropping to shell before switching to the system. type 'exit' to continue boot."
     /sbin/busybox sh
 fi
 exec /sbin/init
@@ -284,7 +301,7 @@ create_grub_cfg() {
   local kernel="$2"
   cat >"$dest" <<EOF
 set default=0
-set timeout=5
+set timeout=10
 menuentry "$DISTRO" {
     echo "=> finding system image"
     search --no-floppy --set=root --file /live/system.sfs
@@ -297,18 +314,88 @@ menuentry "$DISTRO" {
     echo "=> booting"
     boot
 }
-menuentry "$DISTRO (nomodeset)" {
-    echo "=> finding system image"
-    search --no-floppy --set=root --file /live/system.sfs
-    echo "=> mounting system image"
-    loopback loop0 (\$root)/live/system.sfs
-    echo "=> loading linux"
-    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro nomodeset $EXTRA_BOOT_OPT
-    echo "=> loading initramfs"
-    initrd (loop0)/boot/initramfs-$kernel.img
-    echo "=> booting"
-    boot
+
+submenu 'Advanced ($DISTRO)' {
+    menuentry "$DISTRO (Safe Mode)" {
+        echo "=> finding system image"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
+        echo "=> loading linux"
+        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
+        echo "=> loading initramfs"
+        initrd (loop0)/boot/initramfs-$kernel.img
+        echo "=> booting"
+        boot
+    }
+
+    menuentry "$DISTRO (ToRAM - Super Fast)" {
+        echo "=> finding system image"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
+        echo "=> loading linux"
+        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.toram $EXTRA_BOOT_OPT
+        echo "=> loading initramfs"
+        initrd (loop0)/boot/initramfs-$kernel.img
+        echo "=> booting"
+        boot
+    }
+
+    menuentry "$DISTRO (Debug Mode)" {
+        echo "=> finding system image"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
+        echo "=> loading linux"
+        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.debug $EXTRA_BOOT_OPT
+        echo "=> loading initramfs"
+        initrd (loop0)/boot/initramfs-$kernel.img
+        echo "=> booting"
+        boot
+    }
+
+    menuentry "$DISTRO (No Modeset - Basic Graphics)" {
+        echo "=> finding system image"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
+        echo "=> loading linux"
+        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro nomodeset $EXTRA_BOOT_OPT
+        echo "=> loading initramfs"
+        initrd (loop0)/boot/initramfs-$kernel.img
+        echo "=> booting"
+        boot
+    }
 }
+
+submenu 'System Utilities...' {
+    submenu 'Hardware Diagnostics...' {
+        if [ -f /boot/memtest/memtest.efi ]; then
+            menuentry "Memtest86+ (UEFI)" {
+                insmod efi_gop
+                chainloader /boot/memtest/memtest.efi
+            }
+        fi
+        menuentry "List Storage Devices" {
+            ls -l
+            echo "Press any key to return..."
+            getkey
+        }
+        menuentry "Memory Map" {
+            lsmmap
+            echo "Press any key to return..."
+            getkey
+        }
+    }
+    menuentry "Reboot" {
+        reboot
+    }
+    menuentry "Shutdown" {
+        halt
+    }
+}
+
 $EXTRA_GRUB_CONFIG
 EOF
 }
@@ -409,6 +496,8 @@ main() {
       error "busybox not found. Please install busybox-static. Or run $(curl -fsSL https://files.obsidianos.xyz/~odd/static/busybox -o /usr/bin/)"
     fi
   fi
+  mkdir -p "$iso_root/boot/memtest"
+  [ -f "$MEMTEST_EFI" ] && cp "$MEMTEST_EFI" "$iso_root/boot/memtest/memtest.efi"
   info "Creating init script..."
   create_init_script "$iso_root/sbin/init"
   info "Creating GRUB configuration..."
