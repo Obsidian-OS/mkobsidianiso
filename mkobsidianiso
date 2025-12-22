@@ -153,13 +153,37 @@ create_init_script() {
   cat >"$dest" <<'INITEOF'
 #!/sbin/busybox sh
 echo "=> mkobsidianiso"
+get_opt() {
+    local val=$(cat /proc/cmdline | tr ' ' '\n' | grep "^$1=" | cut -d= -f2-)
+    [ -n "$val" ] && echo "$val"
+}
+
+has_opt() {
+    grep -q "\<$1\>" /proc/cmdline
+}
 echo "=> inserting kernel modules"
-for f in /extras/*.ko; do
-  insmod $f || (echo "=> ERROR: UNABLE TO INSERT $f" && sleep 1000)
-done
+if has_opt "obsidian.safemode"; then
+    echo "!!! SAFE MODE ENABLED !!!"
+    insmod /extras/loop.ko 2>/dev/null
+    insmod /extras/squashfs.ko 2>/dev/null
+    insmod /extras/overlay.ko 2>/dev/null
+else
+    for f in /extras/*.ko; do
+        insmod $f || (echo "=> ERROR: failed to insert $f"; sleep 1000)
+    done
+fi
+if has_opt "obsidian.serial"; then
+    exec > /dev/ttyS0 2>&1
+fi
 echo "=> setting up loopback device"
 mknod /dev/loop0 b 7 0 2>/dev/null
-losetup /dev/loop0 /live/system.sfs
+if has_opt "obsidian.toram"; then
+    echo "=> Copying system to RAM (this may take a moment)..."
+    cp /live/system.sfs /system.sfs
+    losetup /dev/loop0 /system.sfs
+else
+    losetup /dev/loop0 /live/system.sfs
+fi
 echo "=> mounting overlay"
 mkdir -p /lower /upper /work /newroot 2>/dev/null
 mount -t squashfs /dev/loop0 /lower 2>/dev/null
@@ -168,15 +192,27 @@ mkdir -p /upper/upper /upper/work 2>/dev/null
 mount -t overlay overlay -o lowerdir=/lower,upperdir=/upper/upper,workdir=/upper/work /newroot 2>/dev/null
 echo "=> moving essential mounts"
 mount --move /dev /newroot/dev 2>/dev/null
-mount --move /proc /newroot/proc 2>/dev/null
-mount --move /sys /newroot/sys 2>/dev/null
+mount -t proc proc /newroot/proc
+mount -t sysfs sysfs /newroot/sys
+NEW_HOST=$(get_opt "obsidian.hostname")
+if [ -n "$NEW_HOST" ]; then
+    echo "$NEW_HOST" > /newroot/etc/hostname
+fi
 echo "=> changing root"
 cd /newroot
+if has_opt "obsidian.debug"; then
+    echo "!!! DEBUG MODE DETECTED !!!"
+    /sbin/busybox sh
+fi
 pivot_root . tmp || (echo "=> ERROR: UNABLE TO PIVOT ROOT (VERY CRITICAL!!!)" && sleep 1000)
 echo "=> mounting the live CD at /mnt/livecd"
 mkdir -p /mnt/livecd
 mount --move /tmp/ /mnt/livecd
 echo "=> bind-mounting extra files recursively"
+if has_opt "obsidian.debug"; then
+    echo "!!! DEBUG MODE DETECTED !!!"
+    /sbin/busybox sh
+fi
 _bind_mount() {
   local src_path="$1"
   local dst_path="$2"
@@ -215,11 +251,15 @@ _bind_mount() {
   fi
   return 0
 }
-for f in /mnt/livecd/extras/files/*; do
-    filename="${f#/mnt/livecd/extras/files/}"
-    target="/${filename%/}"
-    _bind_mount "$f" "$target" || sleep 1000
-done
+if has_opt "obsidian.nobind" || has_opt "obsidian.safemode"; then
+    echo "=> skipping extra files"
+else
+    for f in /mnt/livecd/extras/files/*; do
+      filename="${f#/mnt/livecd/extras/files/}"
+      target="/${filename%/}"
+      _bind_mount "$f" "$target" || sleep 1000
+    done
+fi
 echo "=> symlinking (forcefully!) system image to /etc/system.sfs"
 ln -sf /mnt/livecd/live/system.sfs /etc/system.sfs || (echo "=> ERROR: UNABLE TO SYMLINK SYSTEM IMAGE" && sleep 1000)
 echo "=> symlinking extra binaries"
@@ -228,6 +268,10 @@ for f in /mnt/livecd/extras/binaries/*; do
     ln -sf "$f" /usr/bin/
 done
 echo "=> giving the job to the system. bye from mkobsidianiso"
+if has_opt "obsidian.shell"; then
+    echo "=> Dropping to shell before switching to the system. Type 'exit' to continue boot."
+    /sbin/busybox sh
+fi
 exec /sbin/init
 INITEOF
   chmod +x "$dest"
