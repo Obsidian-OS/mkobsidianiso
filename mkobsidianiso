@@ -303,11 +303,11 @@ create_grub_cfg() {
   local toramline=""
   local nontoramline=""
   if [[ "$ENABLE_TORAM" == "1" ]]; then
-    toramline = "obsidian.toram"
-    nontoramline = ""
+    toramline="obsidian.toram"
+    nontoramline=""
   else
-    toramline = ""
-    nontoramline = "obsidian.toram"
+    toramline=""
+    nontoramline="obsidian.toram"
   fi
   cat >"$dest" <<EOF
 set default=0
