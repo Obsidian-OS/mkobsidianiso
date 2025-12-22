@@ -152,6 +152,7 @@ create_init_script() {
   local dest="$1"
   cat >"$dest" <<'INITEOF'
 #!/sbin/busybox sh
+clear
 echo "=> mkobsidianiso"
 get_opt() {
     local val=$(cat /proc/cmdline | tr ' ' '\n' | grep "^$1=" | cut -d= -f2-)
@@ -179,8 +180,9 @@ echo "=> setting up loopback device"
 mknod /dev/loop0 b 7 0 2>/dev/null
 if has_opt "obsidian.toram"; then
     echo "=> Copying system to RAM (this may take a moment)..."
-    cp /live/system.sfs /system.sfs
-    losetup /dev/loop0 /system.sfs
+    mount -t tmpfs tmpfs /tmp
+    cp /live/system.sfs /tmp/system.sfs
+    losetup /dev/loop0 /tmp/system.sfs
 else
     losetup /dev/loop0 /live/system.sfs
 fi
@@ -284,17 +286,27 @@ create_grub_cfg() {
 set default=0
 set timeout=5
 menuentry "$DISTRO" {
+    echo "=> finding system image"
     search --no-floppy --set=root --file /live/system.sfs
+    echo "=> mounting system image"
     loopback loop0 (\$root)/live/system.sfs
+    echo "=> loading linux"
     linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $EXTRA_BOOT_OPT
+    echo "=> loading initramfs"
     initrd (loop0)/boot/initramfs-$kernel.img
+    echo "=> booting"
     boot
 }
 menuentry "$DISTRO (nomodeset)" {
+    echo "=> finding system image"
     search --no-floppy --set=root --file /live/system.sfs
+    echo "=> mounting system image"
     loopback loop0 (\$root)/live/system.sfs
+    echo "=> loading linux"
     linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro nomodeset $EXTRA_BOOT_OPT
+    echo "=> loading initramfs"
     initrd (loop0)/boot/initramfs-$kernel.img
+    echo "=> booting"
     boot
 }
 $EXTRA_GRUB_CONFIG
@@ -363,7 +375,7 @@ main() {
   fi
   info "Using kernel version: $kernel_version"
   local iso_root="$WORKDIR/iso"
-  mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,extras/files,live,dev,proc,sys,newroot,lower,upper/{work,upper},work}
+  mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,extras/files,live,dev,proc,sys,newroot,lower,upper/{work,upper},work,tmp}
   local squashfs_file="$iso_root/live/system.sfs"
   if [[ -d "$rootfs" ]]; then
     create_squashfs "$rootfs" "$squashfs_file"
