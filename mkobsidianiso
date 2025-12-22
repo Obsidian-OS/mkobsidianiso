@@ -12,6 +12,7 @@ BINARIES=""                                # config
 EXTRA_MODULES=""                           # config
 EXTRA_FILES=""                             # config
 MEMTEST_EFI="/boot/memtest86+/memtest.efi" # config
+ENABLE_TORAM="1"                           # config
 error() {
   echo "ERROR: $*" >&2
   exit 1
@@ -299,6 +300,15 @@ INITEOF
 create_grub_cfg() {
   local dest="$1"
   local kernel="$2"
+  local toramline=""
+  local nontoramline=""
+  if [[ "$DEFAULT_TORAM" == "1" ]]; then
+    toramline = "obsidian.toram"
+    nontoramline = ""
+  else
+    toramline = ""
+    nontoramline = "obsidian.toram"
+  fi
   cat >"$dest" <<EOF
 set default=0
 set timeout=10
@@ -308,7 +318,7 @@ menuentry "$DISTRO" {
     echo "=> mounting system image"
     loopback loop0 (\$root)/live/system.sfs
     echo "=> loading linux"
-    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $EXTRA_BOOT_OPT
+    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
     echo "=> loading initramfs"
     initrd (loop0)/boot/initramfs-$kernel.img
     echo "=> booting"
@@ -329,13 +339,13 @@ submenu 'Advanced ($DISTRO)' {
         boot
     }
 
-    menuentry "$DISTRO (ToRAM - Super Fast)" {
+    menuentry "$DISTRO (ToRAM Toggle)" {
         echo "=> finding system image"
         search --no-floppy --set=root --file /live/system.sfs
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.toram $EXTRA_BOOT_OPT
+        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro $nontoramline $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
         initrd (loop0)/boot/initramfs-$kernel.img
         echo "=> booting"
