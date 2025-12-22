@@ -9,6 +9,8 @@ EXTRA_GRUB_CONFIG=""  # config
 BUSYBOX=""            # config
 EXTRA_BOOT_OPT=""     # config
 BINARIES=""           # config
+EXTRA_MODULES=""      # config
+EXTRA_FILES=""        # config
 error() {
   echo "ERROR: $*" >&2
   exit 1
@@ -43,6 +45,8 @@ Config options:
   BUSYBOX           Busybox binary path
   EXTRA_BOOT_OPT    Extra boot options like "quiet splash"
   BINARIES          Binary file paths to copy
+  EXTRA_MODULES     Extra kernel modules to copy and decompress
+  EXTRA_FILES       Extra files to copy to the ISO and bind-mount
 
 Options:
   -k, --kernel    Specify kernel version (auto-detect if not provided)
@@ -81,6 +85,12 @@ extract_modules() {
   local dest="$3"
   local mount_needed=false
   local mount_point=""
+  declare -A decompressors
+  decompressors[".zst"]="unzstd"
+  decompressors[".gz"]="gunzip"
+  decompressors[".xz"]="unxz"
+  decompressors[".bz2"]="bunzip2"
+  decompressors[".lz4"]="lz4 -d"
   if [[ -f "$rootfs" ]]; then
     mount_point="$WORKDIR/module_mount"
     mkdir -p "$mount_point"
@@ -91,25 +101,47 @@ extract_modules() {
   local mod_dir="$rootfs/lib/modules/$kernel/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
-  local modules=(
+  local mandatory_modules=(
     "fs/squashfs/squashfs.ko"
     "drivers/block/loop.ko"
     "fs/overlayfs/overlay.ko"
   )
 
-  for mod in "${modules[@]}"; do
-    local src="$mod_dir/$mod"
-    [[ -f "$src.zst" ]] && src="$src.zst"
-    [[ ! -f "$src" ]] && error "Module not found: $mod"
-    cp "$src" "$dest/"
-  done
+  local all_modules=("${mandatory_modules[@]}" ${EXTRA_MODULES})
+  for mod_path in "${all_modules[@]}"; do
+    local src_found=false
+    local src_file=""
+    local module_base=$(basename "$mod_path")
+    if [[ -f "$mod_dir/$mod_path" ]]; then
+      src_file="$mod_dir/$mod_path"
+      src_found=true
+    fi
 
-  cd "$dest"
-  if ls *.zst &>/dev/null; then
-    info "Decompressing modules..."
-    unzstd *.zst || error "Failed to decompress modules"
-    rm -f *.zst
-  fi
+    if ! $src_found; then
+      for ext in "${!decompressors[@]}"; do
+        if [[ -f "$mod_dir/$mod_path$ext" ]]; then
+          local decompress_cmd_full="${decompressors[$ext]}"
+          local decompress_cmd_bin=$(echo "$decompress_cmd_full" | cut -d ' ' -f1)
+          if command -v "$decompress_cmd_bin" &>/dev/null; then
+            info "mod: $mod_path$ext. Decompressing..."
+            cp "$mod_dir/$mod_path$ext" "$dest/$module_base$ext" || error "mod: Failed to copy $mod_path$ext"
+            (cd "$dest" && $decompress_cmd_full "$module_base$ext" && rm "$module_base$ext") || error "mod: Failed to decompress $module_base$ext"
+            src_file="$dest/$module_base"
+            src_found=true
+            break
+          else
+            info "WARN: Decompressor '$decompress_cmd_bin' not found. Cannot decompress $mod_path$ext. Skipping."
+          fi
+        fi
+      done
+    fi
+
+    if ! $src_found; then
+      error "mod: not found: $mod_path (neither uncompressed nor supported compressed versions)"
+    elif [[ "$src_file" != "$dest/$module_base" ]]; then
+      cp "$src_file" "$dest/"
+    fi
+  done
 
   if $mount_needed; then
     umount "$mount_point"
@@ -122,9 +154,9 @@ create_init_script() {
 #!/sbin/busybox sh
 echo "=> mkobsidianiso"
 echo "=> inserting kernel modules"
-insmod /extras/loop.ko || (echo "=> ERROR: UNABLE TO INSERT LOOPBACK KERNEL MODULE" && sleep 1000)
-insmod /extras/squashfs.ko || (echo "=> ERROR: UNABLE TO INSERT SQUASHFS KERNEL MODULE" && sleep 1000)
-insmod /extras/overlay.ko || (echo "=> ERROR: UNABLE TO INSERT OVERLAYFS KERNEL MODULE" && sleep 1000)
+for f in /extras/*.ko; do
+  insmod $f || (echo "=> ERROR: UNABLE TO INSERT $f" && sleep 1000)
+done
 echo "=> setting up loopback device"
 mknod /dev/loop0 b 7 0 2>/dev/null
 losetup /dev/loop0 /live/system.sfs
@@ -144,6 +176,50 @@ pivot_root . tmp || (echo "=> ERROR: UNABLE TO PIVOT ROOT (VERY CRITICAL!!!)" &&
 echo "=> mounting the live CD at /mnt/livecd"
 mkdir -p /mnt/livecd
 mount --move /tmp/ /mnt/livecd
+echo "=> bind-mounting extra files recursively"
+_bind_mount() {
+  local src_path="$1"
+  local dst_path="$2"
+  if [ -f "$src_path" ]; then
+    if [ -d "$dst_path" ]; then
+      echo "=> WARN: cannot bind file $src_path to existing directory $dst_path. skipping." >&2
+      return 1
+    fi
+    [ ! -e "$dst_path" ] && touch "$dst_path"
+    if ! mount --bind "$src_path" "$dst_path"; then
+      echo "=> ERROR: failed to bind-mount file $src_path to $dst_path" >&2
+      return 1
+    fi
+  elif [ -d "$src_path" ]; then
+    if [ -e "$dst_path" ]; then
+      if [ -d "$dst_path" ]; then
+        for item in "$src_path"/*; do
+          local item_name=${item#/mnt/livecd/extras/files/}
+          _bind_mount "$item" "$item_name"
+          if [ $? -ne 0 ]; then return 1; fi
+        done
+      else
+        echo "=> WARN: cannot bind directory $src_path to existing non-directory $dst_path. skipping." >&2
+        return 1
+      fi
+    else
+      mkdir -p "$dst_path"
+      if ! mount --bind "$src_path" "$dst_path"; then
+        echo "=> ERROR: failed to bind-mount directory $src_path to $dst_path" >&2
+        return 1
+      fi
+    fi
+  else
+    echo "=> WARN: source $src_path is neither a file nor a directory. skipping." >&2
+    return 0
+  fi
+  return 0
+}
+for f in /mnt/livecd/extras/files/*; do
+    filename="${f#/mnt/livecd/extras/files/}"
+    target="/${filename%/}"
+    _bind_mount "$f" "$target" || sleep 1000
+done
 echo "=> symlinking (forcefully!) system image to /etc/system.sfs"
 ln -sf /mnt/livecd/live/system.sfs /etc/system.sfs || (echo "=> ERROR: UNABLE TO SYMLINK SYSTEM IMAGE" && sleep 1000)
 echo "=> symlinking extra binaries"
@@ -185,7 +261,7 @@ create_squashfs() {
   local src="$1"
   local dest="$2"
   info "Creating system image from $src..."
-  mksquashfs "$src" "$dest" -comp xz -b 1M -Xdict-size 100% || error "Failed to create squashfs"
+  mksquashfs "$src" "$dest" -comp xz -b 1M -Xdict-size 100% -p || error "Failed to create squashfs"
 }
 
 main() {
@@ -236,7 +312,6 @@ main() {
   [[ $EUID -ne 0 ]] && error "This script must be run as root"
   command -v mksquashfs &>/dev/null || error "mksquashfs not found. Install squashfs-tools."
   command -v grub-mkrescue &>/dev/null || error "grub-mkrescue not found. Install grub."
-  command -v unzstd &>/dev/null || error "unzstd not found. Install zstd."
   mkdir -p "$WORKDIR"
   if [[ -z "$kernel_version" ]]; then
     info "Auto-detecting kernel version..."
@@ -244,7 +319,7 @@ main() {
   fi
   info "Using kernel version: $kernel_version"
   local iso_root="$WORKDIR/iso"
-  mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,live,dev,proc,sys,newroot,lower,upper/{work,upper},work}
+  mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,extras/files,live,dev,proc,sys,newroot,lower,upper/{work,upper},work}
   local squashfs_file="$iso_root/live/system.sfs"
   if [[ -d "$rootfs" ]]; then
     create_squashfs "$rootfs" "$squashfs_file"
@@ -255,6 +330,19 @@ main() {
     error "Invalid rootfs type"
   fi
   extract_modules "$squashfs_file" "$kernel_version" "$iso_root/extras"
+  info "Adding extra files/directories"
+  if [[ -n "$EXTRA_FILES" ]]; then
+    for f in $EXTRA_FILES; do
+      if [[ ! -e "$f" ]]; then
+        error "Extra file or directory not found: $f"
+      fi
+
+      local dest_parent_dir="$iso_root/extras/files$(dirname "$f")"
+      info "Copying $f to $dest_parent_dir/"
+      mkdir -p "$dest_parent_dir" || error "Failed to create directory $dest_parent_dir"
+      cp -r "$f" "$dest_parent_dir/" || error "Failed to copy $f"
+    done
+  fi
   info "Installing busybox..."
   if [ -f "$BUSYBOX" ]; then
     cp "$BUSYBOX" "$iso_root/sbin/busybox"
