@@ -90,7 +90,7 @@ extract_modules() {
   declare -A decompressors
   decompressors[".zst"]="unzstd"
   decompressors[".gz"]="gunzip"
-  decompressors[".xz"]="unxz"
+  decompressors[".xz"]="unxz -k"
   decompressors[".bz2"]="bunzip2"
   decompressors[".lz4"]="lz4 -d"
   if [[ -f "$rootfs" ]]; then
