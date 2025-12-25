@@ -561,7 +561,7 @@ main() {
   info "Creating os-release"
   mkdir -p "$iso_root/etc/"
   cat >"$iso_root/etc/os-release" <<'EOF'
-NAME="ObsidianOS"
+NAME="mkobsidianiso"
 PRETTY_NAME="GNU/Linux"
 ID=obsidian
 BUILD_ID=iso
