@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -e
 VERSION="1.0.0"
 WORKDIR="/tmp/mkobsidianiso-$$"
@@ -558,6 +559,7 @@ main() {
   info "Creating init script..."
   create_init_script "$iso_root/sbin/init"
   info "Creating os-release"
+  mkdir -p "$iso_root/etc/"
   cat >"$iso_root/etc/os-release" <<'EOF'
 NAME="ObsidianOS"
 PRETTY_NAME="GNU/Linux"
