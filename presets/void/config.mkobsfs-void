@@ -19,4 +19,4 @@ ADMIN_DOTFILES_TYPE=""         # Type of dotfile repo. Requires git in PACKAGES 
 # * - ignore dotfiles repo (can be empty string) and copy dotfiles from that user's home.
 #     recommended: set this to $SUDO_USER if this is being run with sudo.
 # JUST ADD TO THIS LINE, IF YOU REMOVE THE STUFF IN POST INSTALL YOU WON'T HAVE ACCESS TO INTERNET ON BOOT
-POST_INSTALL="echo 'Login to \`root\` [no password] for the setup.'>>/etc/issue;echo 'Login to \`user\` [password: \`user\`] after install.'>>/etc/issue;echo 'After setup, edit /etc/issue to remove this message and use the sudo passwd root and sudo passwd user to change password for root and user.'>>/etc/issue;" # Line of bash to execute after installation is done
+POST_INSTALL="echo 'You are on \n running kernel \r for \m'>/etc/issue;echo 'It is currently \d \t and you are on tty \l'>>/etc/issue;echo 'Login to \`root\` [no password] for the setup.'>>/etc/issue;echo 'Login to \`user\` [password: \`user\`] after install.'>>/etc/issue;echo 'After setup, edit /etc/issue to remove this message and use the sudo passwd root and sudo passwd user to change password for root and user.'>>/etc/issue;"
