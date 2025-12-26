@@ -1,2 +1,6 @@
 /output.iso
 /thingy
+*.iso
+*.sfs
+/presets/*/mkobsidiansfs/
+
