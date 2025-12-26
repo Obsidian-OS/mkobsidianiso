@@ -74,20 +74,26 @@ detect_kernel() {
     mount_needed=true
     rootfs="$mount_point"
   fi
-  local kernel=$(ls "$rootfs/boot/vmlinuz-"* 2>/dev/null | head -n1 | xargs basename | sed 's/vmlinuz-//')
-  if [[ -z "$kernel" ]]; then
-    kernel=$(ls "$rootfs/boot/vmlinuz"* 2>/dev/null | head -n1 | xargs basename | sed 's/vmlinuz[-]*//')
+  local kernel_file=$(ls "$rootfs/boot/vmlinuz-"* 2>/dev/null | head -n1 | xargs basename)
+  if [[ -z "$kernel_file" ]]; then
+    kernel_file=$(ls "$rootfs/boot/vmlinuz"* 2>/dev/null | head -n1 | xargs basename)
+  fi
+  if [[ -z "$kernel_file" ]]; then
+    kernel_file=$(ls "$rootfs/boot/kernel-"* 2>/dev/null | head -n1 | xargs basename)
+  fi
+  if [[ -z "$kernel_file" ]]; then
+    kernel_file=$(ls "$rootfs/boot/kernel"* 2>/dev/null | head -n1 | xargs basename)
   fi
   if $mount_needed; then
     umount "$mount_point"
   fi
-  [[ -z "$kernel" ]] && error "Could not detect kernel version. Use -k to specify manually."
-  echo "$kernel"
+  [[ -z "$kernel_file" ]] && error "Could not detect kernel file. Use -k to specify manually."
+  echo "$kernel_file"
 }
 
 detect_initramfs_format() {
   local rootfs="$1"
-  local kernel="$2"
+  local kernel_file="$2"
   local mount_needed=false
   local mount_point=""
   if [[ -f "$rootfs" ]]; then
@@ -97,18 +103,19 @@ detect_initramfs_format() {
     mount_needed=true
     rootfs="$mount_point"
   fi
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
   local initramfs_format=""
-  if [[ -f "$rootfs/boot/initramfs-$kernel.img" ]]; then
+  if [[ -f "$rootfs/boot/initramfs-$kernel_version.img" ]]; then
     initramfs_format="initramfs"
-  elif [[ -f "$rootfs/boot/initrd-$kernel.img" ]]; then
+  elif [[ -f "$rootfs/boot/initrd-$kernel_version.img" ]]; then
     initramfs_format="initrd"
-  elif [[ -f "$rootfs/boot/initramfs-$kernel" ]]; then
+  elif [[ -f "$rootfs/boot/initramfs-$kernel_version" ]]; then
     initramfs_format="initramfs_no_ext"
-  elif [[ -f "$rootfs/boot/initrd-$kernel" ]]; then
+  elif [[ -f "$rootfs/boot/initrd-$kernel_version" ]]; then
     initramfs_format="initrd_no_ext"
-  elif [[ -f "$rootfs/boot/initramfs.img-$kernel" ]]; then
+  elif [[ -f "$rootfs/boot/initramfs.img-$kernel_version" ]]; then
     initramfs_format="initramfs_img_prefix"
-  elif [[ -f "$rootfs/boot/initrd.img-$kernel" ]]; then
+  elif [[ -f "$rootfs/boot/initrd.img-$kernel_version" ]]; then
     initramfs_format="initrd_img_prefix"
   fi
   if $mount_needed; then
@@ -119,7 +126,7 @@ detect_initramfs_format() {
 
 extract_modules() {
   local rootfs="$1"
-  local kernel="$2"
+  local kernel_file="$2"
   local dest="$3"
   local mount_needed=false
   local mount_point=""
@@ -136,7 +143,8 @@ extract_modules() {
     mount_needed=true
     rootfs="$mount_point"
   fi
-  local mod_dir="$rootfs/lib/modules/$kernel/kernel"
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
   local mandatory_modules=(
@@ -333,9 +341,14 @@ INITEOF
   chmod +x "$dest"
 }
 
+get_kernel_version_from_file() {
+  local kernel_file="$1"
+  echo "$kernel_file" | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
+}
+
 create_grub_cfg() {
   local dest="$1"
-  local kernel="$2"
+  local kernel_file="$2"
   local rootfs="$3"
   local toramline=""
   local nontoramline=""
@@ -346,16 +359,17 @@ create_grub_cfg() {
     toramline=""
     nontoramline="obsidian.toram"
   fi
-  local initramfs_format=$(detect_initramfs_format "$rootfs" "$kernel")
-  [[ -z "$initramfs_format" ]] && error "Could not detect initramfs format for kernel $kernel"
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  local initramfs_format=$(detect_initramfs_format "$rootfs" "$kernel_version")
+  [[ -z "$initramfs_format" ]] && error "Could not detect initramfs format for kernel $kernel_version"
   local initrd_path=""
   case "$initramfs_format" in
-  "initramfs") initrd_path="/boot/initramfs-$kernel.img" ;;
-  "initrd") initrd_path="/boot/initrd-$kernel.img" ;;
-  "initramfs_no_ext") initrd_path="/boot/initramfs-$kernel" ;;
-  "initrd_no_ext") initrd_path="/boot/initrd-$kernel" ;;
-  "initramfs_img_prefix") initrd_path="/boot/initramfs.img-$kernel" ;;
-  "initrd_img_prefix") initrd_path="/boot/initrd.img-$kernel" ;;
+  "initramfs") initrd_path="/boot/initramfs-$kernel_version.img" ;;
+  "initrd") initrd_path="/boot/initrd-$kernel_version.img" ;;
+  "initramfs_no_ext") initrd_path="/boot/initramfs-$kernel_version" ;;
+  "initrd_no_ext") initrd_path="/boot/initrd-$kernel_version" ;;
+  "initramfs_img_prefix") initrd_path="/boot/initramfs.img-$kernel_version" ;;
+  "initrd_img_prefix") initrd_path="/boot/initrd.img-$kernel_version" ;;
   esac
   cat >"$dest" <<EOF
 set default=0
@@ -366,7 +380,7 @@ menuentry "$DISTRO" {
     echo "=> mounting system image"
     loopback loop0 (\$root)/live/system.sfs
     echo "=> loading linux"
-    linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
+    linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
     echo "=> loading initramfs"
     initrd (loop0)$initrd_path
     echo "=> booting"
@@ -380,7 +394,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
         initrd (loop0)$initrd_path
         echo "=> booting"
@@ -393,7 +407,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro $nontoramline $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro $nontoramline $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
         initrd (loop0)$initrd_path
         echo "=> booting"
@@ -406,7 +420,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro obsidian.debug $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
         initrd (loop0)$initrd_path
         echo "=> booting"
@@ -419,7 +433,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/vmlinuz-$kernel root=LABEL=OBOS_$ISO_NAME ro nomodeset $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro nomodeset $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
         initrd (loop0)$initrd_path
         echo "=> booting"
@@ -467,7 +481,7 @@ create_squashfs() {
 
 main() {
   old_pwd="$PWD"
-  local kernel_version=""
+  local kernel_file=""
   local rootfs=""
   local output=""
   local config=""
@@ -482,7 +496,7 @@ main() {
       exit 0
       ;;
     -k | --kernel)
-      kernel_version="$2"
+      kernel_file="$2"
       shift 2
       ;;
     -*)
@@ -514,11 +528,11 @@ main() {
   command -v mksquashfs &>/dev/null || error "mksquashfs not found. Install squashfs-tools."
   command -v grub-mkrescue &>/dev/null || error "grub-mkrescue not found. Install grub."
   mkdir -p "$WORKDIR"
-  if [[ -z "$kernel_version" ]]; then
-    info "Auto-detecting kernel version..."
-    kernel_version=$(detect_kernel "$rootfs")
+  if [[ -z "$kernel_file" ]]; then
+    info "Auto-detecting kernel file..."
+    kernel_file=$(detect_kernel "$rootfs")
   fi
-  info "Using kernel version: $kernel_version"
+  info "Using kernel file: $kernel_file"
   local iso_root="$WORKDIR/iso"
   mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,extras/files,live,dev,proc,sys,newroot,lower,upper/{work,upper},work,tmp}
   local squashfs_file="$iso_root/live/system.sfs"
@@ -530,7 +544,7 @@ main() {
   else
     error "Invalid rootfs type"
   fi
-  extract_modules "$squashfs_file" "$kernel_version" "$iso_root/extras"
+  extract_modules "$squashfs_file" "$kernel_file" "$iso_root/extras"
   info "Adding extra files/directories"
   if [[ -n "$EXTRA_FILES" ]]; then
     for f in $EXTRA_FILES; do
