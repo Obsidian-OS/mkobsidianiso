@@ -1,0 +1,22 @@
+# Default Settings. Do not edit, source a script that just edits these files.
+BUILD_DIR="./obsidian_rootfs" # SquashFS generation directory # Below is default packages for an install of arch and this script to work.
+PACKAGES="xbps grub-x86_64-efi linux dracut openssl f2fs-tools python grub vsv NetworkManager vim nano efibootmgr git gptfdisk"
+OUTPUT_SFS="system.sfs" # Output SquashFS
+ROOTFS="https://repo-default.voidlinux.org/live/current/"
+REPO="REPO=https://repo-default.voidlinux.org/current"
+ARCH="ARCH=x86_64"
+TIMEZONE=""                    # Olson Timezone
+HOSTNAME="obsidian-void"       # Hostname
+SERVICES="dbus NetworkManager" # Services to enable with runit
+ROOT_HAVEPASSWORD="h"           # Set this to anything other than blank to remove the password from the root user.
+CUSTOM_SCRIPTS_DIR=""          # Place where scripts that must run in the SquashFS will run.
+ADMIN_USER="user"                  # Creates an user with the 'wheel' group
+ADMIN_DOTFILES=""              # If an admin is created, a git repo that will be cloned to the new user.
+ADMIN_PASSWORD="user"              # Password to set for ADMIN_USER, if empty will ask interactively
+ADMIN_DOTFILES_TYPE=""         # Type of dotfile repo. Requires git in PACKAGES if HOME or CONFIG.
+# HOME - the inside of the repo has data for your home directory (ex: .zshrc, .config, .bashrc)
+# CONFIG - the inside of the repo has data for your .config directory (ex: gtk, fish, kitty, hypr)
+# * - ignore dotfiles repo (can be empty string) and copy dotfiles from that user's home.
+#     recommended: set this to $SUDO_USER if this is being run with sudo.
+# JUST ADD TO THIS LINE, IF YOU REMOVE THE STUFF IN POST INSTALL YOU WON'T HAVE ACCESS TO INTERNET ON BOOT
+POST_INSTALL="echo 'Login to \`root\` [no password] for the setup.'>>/etc/issue;echo 'Login to \`user\` [password: \`user\`] after install.'>>/etc/issue;echo 'After setup, edit /etc/issue to remove this message and use the sudo passwd root and sudo passwd user to change password for root and user.'>>/etc/issue;" # Line of bash to execute after installation is done

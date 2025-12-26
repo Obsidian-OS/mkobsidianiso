@@ -3,4 +3,4 @@
 *.iso
 *.sfs
 /presets/*/mkobsidiansfs/
-
+/presets/*/obsidianctl/
