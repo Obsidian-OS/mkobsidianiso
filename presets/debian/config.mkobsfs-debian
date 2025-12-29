@@ -1,0 +1,22 @@
+BUILD_DIR="/tmp/obsidian_rootfs_debian"            # SquashFS generation directory
+DEBIAN_RELEASE="trixie"                            # Debian release to bootstrap
+DEBIAN_MIRROR="http://deb.debian.org/debian"       # Debian mirror
+DEBIAN_COMPONENTS="main,contrib,non-free-firmware" # Debian components
+DEBIAN_ARCH="amd64"                                # Debian CPU Arch
+# Below is default packages for a minimal Debian install and this script to work.
+PACKAGES="debian-archive-keyring,systemd-sysv,dbus,sudo,vim,nano,efibootmgr,python3,squashfs-tools,git,gdisk,ca-certificates,network-manager,linux-image-amd64,coreutils,firmware-linux,firmware-linux-nonfree,firmware-iwlwifi,firmware-realtek,firmware-brcm80211,grub-efi,efibootmgr,grub-efi-$DEBIAN_ARCH,grub-efi-$DEBIAN_ARCH-bin,grub-common,grub2-common"
+OUTPUT_SFS="system.sfs"    # Output SquashFS
+TIMEZONE=""                # Olson Timezone
+HOSTNAME="obsidian-debian" # Hostname
+SERVICES="NetworkManager"  # Services to enable with systemctl
+ROOT_HAVEPASSWORD="h"      # Set this to anything other than blank to remove the password from the root user.
+CUSTOM_SCRIPTS_DIR=""      # Place where scripts that must run in the SquashFS will run.
+ADMIN_USER="user"          # Creates an user with the 'sudo' group
+ADMIN_DOTFILES=""          # If an admin is created, a git repo that will be cloned to the new user.
+ADMIN_PASSWORD="user"      # Password to set for ADMIN_USER, if empty will ask interactively
+ADMIN_DOTFILES_TYPE=""     # Type of dotfile repo. Requires git in PACKAGES if HOME or CONFIG.
+# HOME - the inside of the repo has data for your home directory (ex: .zshrc, .config, .bashrc)
+# CONFIG - the inside of the repo has data for your .config directory (ex: gtk, fish, kitty, hypr)
+# * - ignore dotfiles repo (can be empty string) and copy dotfiles from that user's home.
+#     recommended: set this to $SUDO_USER if this is being run with sudo.
+POST_INSTALL="echo 'You are on \n running kernel \r for \m'>/etc/issue;echo 'It is currently \d \t and you are on tty \l'>>/etc/issue;echo 'Login to \`root\` [no password] for the setup.'>>/etc/issue;echo 'Login to \`user\` [password: \`user\`] after install.'>>/etc/issue;echo 'After setup, edit /etc/issue to remove this message and use the sudo passwd root and sudo passwd user to change password for root and user.'>>/etc/issue;"
