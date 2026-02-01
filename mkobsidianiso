@@ -103,7 +103,7 @@ detect_initramfs_format() {
     mount_needed=true
     rootfs="$mount_point"
   fi
-  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
   local initramfs_format=""
   if [[ -f "$rootfs/boot/initramfs-$kernel_version.img" ]]; then
     initramfs_format="initramfs"
@@ -144,6 +144,8 @@ extract_modules() {
     rootfs="$mount_point"
   fi
   local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  file "$kernel_file" | grep -oP 'version \K[^\s,]+'
+  echo ver $kernel_version
   local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
@@ -343,7 +345,11 @@ INITEOF
 
 get_kernel_version_from_file() {
   local kernel_file="$1"
-  echo "$kernel_file" | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
+  if [ $2 == "h" ]; then
+    echo "$kernel_file" | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
+  else
+    echo $(file "$kernel_file" | grep -oP 'version \K[^\s,]+')
+  fi
 }
 
 create_grub_cfg() {
