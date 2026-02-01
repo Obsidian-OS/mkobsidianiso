@@ -1,0 +1,20 @@
+BUILD_DIR="obsidian_rootfs"                    # SquashFS generation directory # Below is default packages for an install of arch and this script to work.
+ARCH="$(uname -m)"                             # CPU Architecture
+VERSION="latest-stable"                        # Alpine Version (latest-stable, edge, or a specific Alpine version)
+MIRROR="https://dl-cdn.alpinelinux.org/alpine" # Alpine Package Mirror
+PACKAGES="alpine-base alpine-release alpine-sdk arch-install-scripts linux-stable networkmanager sudo vim nano efibootmgr python3 squashfs-tools grub-efi gptfdisk f2fs-tools grub gpm wget pv sbctl mkinitfs"
+OUTPUT_SFS="system.sfs"                          # Output SquashFS
+TIMEZONE=""                                      # Olson Timezone
+HOSTNAME="alpinebtw"                             # Hostname
+SERVICES="networking networkmanager gpm plugind" # Services to enable with systemctl
+ROOT_HAVEPASSWORD=""                             # Set this to anything other than blank to remove the password from the root user.
+CUSTOM_SCRIPTS_DIR=""                            # Place where scripts that must run in the SquashFS will run.
+ADMIN_USER="user"                                # Creates an user with the 'wheel' group
+ADMIN_DOTFILES=""                                # If an admin is created, a git repo that will be cloned to the new user.
+ADMIN_PASSWORD=""                                # Password to set for ADMIN_USER, if empty will ask interactively
+ADMIN_DOTFILES_TYPE=""                           # Type of dotfile repo. Requires git in PACKAGES if HOME or CONFIG.
+# HOME - the inside of the repo has data for your home directory (ex: .zshrc, .config, .bashrc)
+# CONFIG - the inside of the repo has data for your .config directory (ex: gtk, fish, kitty, hypr)
+# * - ignore dotfiles repo (can be empty string) and copy dotfiles from that user's home.
+#     recommended: set this to $SUDO_USER if this is being run with sudo.
+POST_INSTALL="" # Line of bash to execute after installation is done
