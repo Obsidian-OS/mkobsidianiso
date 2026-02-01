@@ -364,7 +364,8 @@ create_grub_cfg() {
     toramline=""
     nontoramline="obsidian.toram"
   fi
-  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  kernel_file=$(echo $kernel_file | xargs basename)
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
   local initramfs_format=$(detect_initramfs_format "$rootfs" "$kernel_file")
   [[ -z "$initramfs_format" ]] && error "Could not detect initramfs format for kernel $kernel_version"
   local initrd_path=""
