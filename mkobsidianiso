@@ -25,6 +25,7 @@ info() {
 
 cleanup() {
   info "Cleaning up..."
+  umount "$WORKDIR" || true
   rm -rf "$WORKDIR"
 }
 
@@ -74,15 +75,15 @@ detect_kernel() {
     mount_needed=true
     rootfs="$mount_point"
   fi
-  local kernel_file=$(ls "$rootfs/boot/vmlinuz-"* 2>/dev/null | head -n1 | xargs basename)
+  local kernel_file=$(ls "$rootfs/boot/vmlinuz-"* 2>/dev/null | head -n1)
   if [[ -z "$kernel_file" ]]; then
-    kernel_file=$(ls "$rootfs/boot/vmlinuz"* 2>/dev/null | head -n1 | xargs basename)
+    kernel_file=$(ls "$rootfs/boot/vmlinuz"* 2>/dev/null | head -n1)
   fi
   if [[ -z "$kernel_file" ]]; then
-    kernel_file=$(ls "$rootfs/boot/kernel-"* 2>/dev/null | head -n1 | xargs basename)
+    kernel_file=$(ls "$rootfs/boot/kernel-"* 2>/dev/null | head -n1)
   fi
   if [[ -z "$kernel_file" ]]; then
-    kernel_file=$(ls "$rootfs/boot/kernel"* 2>/dev/null | head -n1 | xargs basename)
+    kernel_file=$(ls "$rootfs/boot/kernel"* 2>/dev/null | head -n1)
   fi
   if $mount_needed; then
     umount "$mount_point"
@@ -144,8 +145,7 @@ extract_modules() {
     rootfs="$mount_point"
   fi
   local kernel_version=$(get_kernel_version_from_file "$kernel_file")
-  file "$kernel_file" | grep -oP 'version \K[^\s,]+'
-  echo ver $kernel_version
+  echo $kernel_file
   local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
@@ -346,7 +346,7 @@ INITEOF
 get_kernel_version_from_file() {
   local kernel_file="$1"
   if [ $2 == "h" ]; then
-    echo "$kernel_file" | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
+    echo "$kernel_file" | xargs basename | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
   else
     echo $(file "$kernel_file" | grep -oP 'version \K[^\s,]+')
   fi
