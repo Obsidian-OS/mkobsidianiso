@@ -69,7 +69,7 @@ detect_kernel() {
   local mount_needed=false
   local mount_point=""
   if [[ -f "$rootfs" ]]; then
-    mount_point="$WORKDIR/detect_mount"
+    mount_point="$WORKDIR/module_mount"
     mkdir -p "$mount_point"
     mount -o loop,ro "$rootfs" "$mount_point" 2>/dev/null || error "Failed to mount $rootfs for kernel detection"
     mount_needed=true
@@ -145,7 +145,6 @@ extract_modules() {
     rootfs="$mount_point"
   fi
   local kernel_version=$(get_kernel_version_from_file "$kernel_file")
-  echo $kernel_file
   local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
@@ -173,7 +172,7 @@ extract_modules() {
           if command -v "$decompress_cmd_bin" &>/dev/null; then
             info "mod: $mod_path$ext. Decompressing..."
             cp "$mod_dir/$mod_path$ext" "$dest/$module_base$ext" || error "mod: Failed to copy $mod_path$ext"
-            (cd "$dest" && $decompress_cmd_full "$module_base$ext" && rm "$module_base$ext") || error "mod: Failed to decompress $module_base$ext"
+            (cd "$dest" && $decompress_cmd_full "$module_base$ext" && (rm "$module_base$ext") || true) || error "mod: Failed to decompress $module_base$ext"
             src_file="$dest/$module_base"
             src_found=true
             break
@@ -345,7 +344,7 @@ INITEOF
 
 get_kernel_version_from_file() {
   local kernel_file="$1"
-  if [ $2 == "h" ]; then
+  if [ "$2" == "h" ]; then
     echo "$kernel_file" | xargs basename | sed -e 's/^vmlinuz-//' -e 's/^kernel-//' -e 's/^vmlinuz//' -e 's/^kernel//'
   else
     echo $(file "$kernel_file" | grep -oP 'version \K[^\s,]+')
