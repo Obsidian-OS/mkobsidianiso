@@ -212,12 +212,12 @@ has_opt() {
 echo "=> inserting kernel modules"
 if has_opt "obsidian.safemode"; then
     echo "!!! SAFE MODE ENABLED !!!"
-    insmod /extras/loop.ko 2>/dev/null
-    insmod /extras/squashfs.ko 2>/dev/null
-    insmod /extras/overlay.ko 2>/dev/null
+    insmod /extras/loop.ko || true
+    insmod /extras/squashfs.ko || true
+    insmod /extras/overlay.ko || true
 else
     for f in /extras/*.ko; do
-        insmod $f || (echo "=> ERROR: failed to insert $f"; sleep 1000)
+        insmod $f || true  # i am sorry but i needed the OR true
     done
 fi
 if has_opt "obsidian.serial"; then
