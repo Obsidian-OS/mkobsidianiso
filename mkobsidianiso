@@ -380,7 +380,7 @@ create_grub_cfg() {
   cat >"$dest" <<EOF
 set default=0
 set timeout=10
-search --no-floppy --label VENTOY --set=ventoy
+search --no-floppy --label Ventoy --set=ventoy
 if [ -n "$ventoy" ]; then
     set root_param="root=/dev/mapper/ventoy VTOY_LINUX_REMOUNT=1"
 else
