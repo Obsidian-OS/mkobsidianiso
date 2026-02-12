@@ -1,24 +1,27 @@
 BUILD_DIR="./obsidian_rootfs_gentoo" # SquashFS generation directory
 GENTOO_ARCH="amd64"
+GENTOO_INIT="systemd"        # or openrc
+GENTOO_PREFER_BINHOST="true" # set to anything other than `true` to disable
 ACCEPT_LICENSE="*"
+ENABLE_AMDGPU="true"  # enable AMD GPU Drivers
+ENABLE_NVIDIA=""      # enable NVIDIA GPU Drivers
 GENTOO_STAGE3_URL="-" # URL to rootfs of stage3 of gentoo. `-` to dynamically fetch it
 GENTOO_MIRROR="https://distfiles.gentoo.org/"
-GENTOO_PROFILE="default/linux/amd64/23.0/desktop/systemd" # Gentoo release
-#GENTOO_PROFILE="default/linux/amd64/23.0/desktop/openrc" # Gentoo release
+GENTOO_PROFILE="default/linux/amd64/23.0/desktop/%init%" # Gentoo release, %ini% is a placeholder. do not touch %init%.
 # Below is default packages for a minimal Gentoo desktop install and this script to work.
-PACKAGES="sys-apps/baselayout net-misc/networkmanager app-admin/sudo app-editors/nano app-editors/vim sys-boot/efibootmgr dev-lang/python sys-fs/squashfs-tools dev-vcs/git sys-apps/gptfdisk sys-fs/f2fs-tools sys-kernel/linux-firmware sys-kernel/gentoo-kernel-bin sys-boot/efibootmgr app-crypt/sbctl"
+PACKAGES="sys-apps/baselayout sys-fs/dosfstools app-arch/p7zip app-arch/xz-utils sys-fs/mtools net-misc/networkmanager app-admin/sudo app-editors/nano app-editors/vim sys-boot/efibootmgr dev-lang/python sys-fs/squashfs-tools dev-vcs/git sys-apps/gptfdisk sys-fs/f2fs-tools sys-kernel/linux-firmware sys-kernel/gentoo-kernel-bin sys-boot/efibootmgr app-crypt/sbctl"
 OUTPUT_SFS="system.sfs"    # Output SquashFS
 TIMEZONE=""                # Olson Timezone
 HOSTNAME="obsidian-gentoo" # Hostname
 SERVICES="NetworkManager"  # Services to enable with systemctl
-ROOT_HAVEPASSWORD="h"       # Set this to anything other than blank to remove the password from the root user.
+ROOT_HAVEPASSWORD=""       # Set this to anything other than blank to remove the password from the root user.
 CUSTOM_SCRIPTS_DIR=""      # Place where scripts that must run in the SquashFS will run.
-ADMIN_USER="user"              # Creates an user with the 'wheel' group
+ADMIN_USER=""              # Creates an user with the 'wheel' group
 ADMIN_DOTFILES=""          # If an admin is created, a git repo that will be cloned to the new user.
-ADMIN_PASSWORD="user"          # Password to set for ADMIN_USER, if empty will ask interactively
+ADMIN_PASSWORD=""          # Password to set for ADMIN_USER, if empty will ask interactively
 ADMIN_DOTFILES_TYPE=""     # Type of dotfile repo. Requires git in PACKAGES if HOME or CONFIG.
 # HOME - the inside of the repo has data for your home directory (ex: .zshrc, .config, .bashrc)
 # CONFIG - the inside of the repo has data for your .config directory (ex: gtk, fish, kitty, hypr)
 # * - ignore dotfiles repo (can be empty string) and copy dotfiles from that user's home.
 #     recommended: set this to $SUDO_USER if this is being run with sudo.
-POST_INSTALL="echo 'You are on \n running kernel \r for \m'>/etc/issue;echo 'It is currently \d \t and you are on tty \l'>>/etc/issue;echo 'Login to \`root\` [no password] for the setup.'>>/etc/issue;echo 'Login to \`user\` [password: \`user\`] after install.'>>/etc/issue;echo 'After setup, edit /etc/issue to remove this message and use the sudo passwd root and sudo passwd user to change password for root and user.'>>/etc/issue;"
+POST_INSTALL="" # Line of bash to execute after installation is done
