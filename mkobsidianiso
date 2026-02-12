@@ -533,9 +533,8 @@ create_wrapper_initramfs() {
   local kernel_file="$2"
   local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
   local mount_point="$WORKDIR/squashfs_mount"
-  local wrapper_dir="$WORKDIR/wrapper_initramfs"
   local orig_initramfs_dir="$WORKDIR/orig_initramfs"
-  mkdir -p "$mount_point" "$wrapper_dir" "$orig_initramfs_dir"
+  mkdir -p "$mount_point" "$orig_initramfs_dir"
   mount -o loop,ro "$squashfs_file" "$mount_point" || error "Failed to mount squashfs for wrapper creation"
   local initramfs_file=""
   if [[ -f "$mount_point/boot/initramfs-$kernel_version.img" ]]; then
@@ -553,12 +552,12 @@ create_wrapper_initramfs() {
   fi
 
   [[ -z "$initramfs_file" ]] && error "Could not find initramfs in squashfs"
-  info "Extracting original initramfs (skipping early microcode)..."
+  info "Using initramfs file: $initramfs_file"
+  info "Extracting original initramfs..."
   extract_initramfs_skip_microcode "$initramfs_file" "$orig_initramfs_dir"
-
   [[ -f "$orig_initramfs_dir/init" ]] || error "No init found in original initramfs"
-  mv "$orig_initramfs_dir/init" "$orig_initramfs_dir/initog"
-  cat >"$wrapper_dir/init" <<'WRAPPEOF'
+  cp "$orig_initramfs_dir/init" "$orig_initramfs_dir/initog"
+  cat >"$orig_initramfs_dir/init" <<'WRAPPEOF'
 #!/busyboxw
 mount -t proc proc /proc || true
 mount -t sysfs sysfs /sys || true
@@ -569,66 +568,38 @@ done
 exec /initog
 WRAPPEOF
 
-  chmod +x "$wrapper_dir/init"
+  chmod +x "$orig_initramfs_dir/init"
   if [ -f "$BUSYBOX" ]; then
-    cp "$BUSYBOX" "$wrapper_dir/busyboxw"
+    cp "$BUSYBOX" "$orig_initramfs_dir/busyboxw"
   else
-    cp "$(command -v busybox)" "$wrapper_dir/busyboxw"
+    cp "$(command -v busybox)" "$orig_initramfs_dir/busyboxw"
   fi
 
-  mkdir -p "$wrapper_dir/modules"
-  extract_dm_modules "$squashfs_file" "$kernel_file" "$wrapper_dir/modules"
-  mkdir -p "$wrapper_dir/wrapper_root"
-  mkdir -p "$wrapper_dir/proc" "$wrapper_dir/sys" "$wrapper_dir/dev"
-  (cd "$wrapper_dir" && find . | cpio -o -H newc | gzip -c) > "$WORKDIR/iso/live/init.img" || error "Failed to create wrapper initramfs"
+  mkdir -p "$orig_initramfs_dir/modules"
+  extract_dm_modules "$squashfs_file" "$kernel_file" "$orig_initramfs_dir/modules"
+  mkdir -p "$orig_initramfs_dir/proc" "$orig_initramfs_dir/sys" "$orig_initramfs_dir/dev"
+  (cd "$orig_initramfs_dir" && find . | cpio -o -H newc | gzip -c) > "$WORKDIR/iso/live/init.img" || error "Failed to create wrapper initramfs"
   umount "$mount_point"
-  rm -rf "$orig_initramfs_dir" "$wrapper_dir"
+  rm -rf "$orig_initramfs_dir"
 }
 
 extract_initramfs_skip_microcode() {
   local initramfs_file="$1"
   local dest_dir="$2"
-  local temp_file="$WORKDIR/temp_initramfs"
-  if file "$initramfs_file" | grep -q gzip; then
-    gunzip -c "$initramfs_file" > "$temp_file"
-  else
-    cp "$initramfs_file" "$temp_file"
-  fi
-  local offset=0
-  local file_size=$(stat -c%s "$temp_file")
-  local found_main=false
-  while [ $offset -lt $file_size ]; do
-    local magic=$(od -t x1 -N 6 -j $offset "$temp_file" | awk '{print $2$3$4$5$6}' | tr -d ' ')
-    if [[ "$magic" == "303730373031" ]] || [[ "$magic" == "303730373032" ]]; then
-        dd if="$temp_file" bs=512 skip=$((offset/512)) 2>/dev/null | (
-        cd "$dest_dir"
-        cpio -idm 2>/dev/null || true
-      )
-
-      if [[ -f "$dest_dir/init" ]] && [[ "$found_main" == "false" ]]; then
-        found_main=true
-        rm -rf "$dest_dir"/*
-        dd if="$temp_file" bs=512 skip=$((offset/512)) 2>/dev/null | (
-          cd "$dest_dir"
-          cpio -idm || error "Failed to extract main initramfs"
-        )
-        break
-      else
-        rm -rf "$dest_dir"/*
-      fi
-
-      offset=$((offset + 1024))
-      if [[ $offset -ge $file_size ]]; then
-        break
-      fi
+  if command -v bsdtar &>/dev/null; then
+    info "Using bsdtar for initramfs extraction"
+    if file "$initramfs_file" | grep -q gzip; then
+      bsdtar -C "$dest_dir" -xf "$initramfs_file" 2>/dev/null || error "Failed to extract initramfs with bsdtar"
     else
-      break
+      bsdtar -C "$dest_dir" -xf "$initramfs_file" 2>/dev/null || error "Failed to extract initramfs with bsdtar"
     fi
-  done
-  if [[ "$found_main" == "false" ]]; then
-    (cd "$dest_dir" && cpio -idm < "$temp_file") || error "Failed to extract initramfs"
+  else
+    if file "$initramfs_file" | grep -q gzip; then
+      (cd "$dest_dir" && gunzip -c "$initramfs_file" | cpio -idm 2>/dev/null) || error "Failed to extract initramfs"
+    else
+      (cd "$dest_dir" && cpio -idm < "$initramfs_file") || error "Failed to extract initramfs"
+    fi
   fi
-  rm -f "$temp_file"
 }
 
 create_squashfs() {

@@ -1,5 +1,6 @@
 /output.iso
 /thingy
+/thing*
 *.iso
 *.sfs
 *.iso.*
