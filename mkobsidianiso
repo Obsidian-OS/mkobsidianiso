@@ -553,12 +553,8 @@ create_wrapper_initramfs() {
   fi
 
   [[ -z "$initramfs_file" ]] && error "Could not find initramfs in squashfs"
-  info "Extracting original initramfs..."
-  if file "$initramfs_file" | grep -q gzip; then
-    (cd "$orig_initramfs_dir" && gunzip -c "$initramfs_file" | cpio -idm) || error "Failed to extract initramfs"
-  else
-    (cd "$orig_initramfs_dir" && cpio -idm < "$initramfs_file") || error "Failed to extract initramfs"
-  fi
+  info "Extracting original initramfs (skipping early microcode)..."
+  extract_initramfs_skip_microcode "$initramfs_file" "$orig_initramfs_dir"
 
   [[ -f "$orig_initramfs_dir/init" ]] || error "No init found in original initramfs"
   mv "$orig_initramfs_dir/init" "$orig_initramfs_dir/initog"
@@ -587,6 +583,60 @@ WRAPPEOF
   (cd "$wrapper_dir" && find . | cpio -o -H newc | gzip -c) > "$WORKDIR/iso/live/init.img" || error "Failed to create wrapper initramfs"
   umount "$mount_point"
   rm -rf "$orig_initramfs_dir" "$wrapper_dir"
+}
+
+extract_initramfs_skip_microcode() {
+  local initramfs_file="$1"
+  local dest_dir="$2"
+  local temp_file="$WORKDIR/temp_initramfs"
+  if file "$initramfs_file" | grep -q gzip; then
+    gunzip -c "$initramfs_file" > "$temp_file"
+  else
+    cp "$initramfs_file" "$temp_file"
+  fi
+  local offset=0
+  local file_size=$(stat -c%s "$temp_file")
+  local found_main=false
+  while [ $offset -lt $file_size ]; do
+    local magic=$(dd if="$temp_file" bs=1 skip=$offset count=6 2>/dev/null | xxd -p)
+    if [[ "$magic" == "303730373031" ]] || [[ "$magic" == "303730373032" ]]; then
+      dd if="$temp_file" bs=1 skip=$offset 2>/dev/null | (
+        cd "$dest_dir"
+        cpio -idm 2>/dev/null || true
+      )
+
+      if [[ -f "$dest_dir/init" ]] && [[ "$found_main" == "false" ]]; then
+        found_main=true
+        rm -rf "$dest_dir"/*
+        dd if="$temp_file" bs=1 skip=$offset 2>/dev/null | (
+          cd "$dest_dir"
+          cpio -idm || error "Failed to extract main initramfs"
+        )
+        break
+      else
+        rm -rf "$dest_dir"/*
+      fi
+
+      local next_offset=$(dd if="$temp_file" bs=1 skip=$offset 2>/dev/null | cpio -t 2>/dev/null | tail -n1 | awk '{print $6}' | sed 's/^0*//' 2>/dev/null || echo "0")
+      if [[ -z "$next_offset" ]] || [[ "$next_offset" == "0" ]]; then
+        offset=$((offset + 512))
+      else
+        offset=$((offset + next_offset))
+      fi
+
+      if [[ $offset -ge $file_size ]]; then
+        break
+      fi
+    else
+      break
+    fi
+  done
+
+  if [[ "$found_main" == "false" ]]; then
+    (cd "$dest_dir" && cpio -idm < "$temp_file") || error "Failed to extract initramfs"
+  fi
+
+  rm -f "$temp_file"
 }
 
 create_squashfs() {
