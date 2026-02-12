@@ -389,7 +389,7 @@ menuentry "$DISTRO" {
     echo "=> loading linux"
     linux (loop0)/boot/$kernel_file \$root_param rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
     echo "=> loading initramfs"
-    initrd (loop0)$initrd_path
+    initrd /live/init.img
     echo "=> booting"
     boot
 }
@@ -403,7 +403,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> loading linux"
         linux (loop0)/boot/$kernel_file \$root_param ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd /live/init.img
         echo "=> booting"
         boot
     }
@@ -416,7 +416,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> loading linux"
         linux (loop0)/boot/$kernel_file \$root_param ro $nontoramline $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd /live/init.img
         echo "=> booting"
         boot
     }
@@ -429,7 +429,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> loading linux"
         linux (loop0)/boot/$kernel_file \$root_param ro obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd /live/init.img
         echo "=> booting"
         boot
     }
@@ -442,7 +442,7 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> loading linux"
         linux (loop0)/boot/$kernel_file \$root_param ro nomodeset $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd /live/init.img
         echo "=> booting"
         boot
     }
@@ -477,6 +477,116 @@ submenu 'System Utilities...' {
 
 $EXTRA_GRUB_CONFIG
 EOF
+}
+
+extract_dm_modules() {
+  local rootfs="$1"
+  local kernel_file="$2"
+  local dest="$3"
+  local mount_needed=false
+  local mount_point=""
+  if [[ -f "$rootfs" ]]; then
+    mount_point="$WORKDIR/module_mount"
+    mkdir -p "$mount_point"
+    mount -o loop,ro "$rootfs" "$mount_point" || error "Failed to mount $rootfs"
+    mount_needed=true
+    rootfs="$mount_point"
+  fi
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
+  local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
+  [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
+  info "Extracting device-mapper modules for initramfs..."
+  local dm_modules=(
+    "drivers/md/dm-mod.ko"
+    "drivers/md/dm-bufio.ko"
+    "drivers/md/dm-snap.ko"
+    "drivers/md/dm-mirror.ko"
+    "drivers/md/dm-region-hash.ko"
+    "drivers/md/dm-log.ko"
+    "drivers/md/dm-crypt.ko"
+  )
+  for mod_path in "${dm_modules[@]}"; do
+    if [[ -f "$mod_dir/$mod_path" ]]; then
+      cp "$mod_dir/$mod_path" "$dest/" || error "Failed to copy $mod_path"
+    else
+      for ext in ".zst" ".gz" ".xz" ".bz2" ".lz4"; do
+        if [[ -f "$mod_dir/$mod_path$ext" ]]; then
+          case "$ext" in
+          ".zst") unzstd -c "$mod_dir/$mod_path$ext" >"$dest/$(basename "$mod_path")" 2>/dev/null || true ;;
+          ".gz") gunzip -c "$mod_dir/$mod_path$ext" >"$dest/$(basename "$mod_path")" 2>/dev/null || true ;;
+          ".xz") unxz -c "$mod_dir/$mod_path$ext" >"$dest/$(basename "$mod_path")" 2>/dev/null || true ;;
+          ".bz2") bunzip2 -c "$mod_dir/$mod_path$ext" >"$dest/$(basename "$mod_path")" 2>/dev/null || true ;;
+          ".lz4") lz4 -d -c "$mod_dir/$mod_path$ext" >"$dest/$(basename "$mod_path")" 2>/dev/null || true ;;
+          esac
+          break
+        fi
+      done
+    fi
+  done
+  if $mount_needed; then
+    umount "$mount_point"
+  fi
+}
+
+create_wrapper_initramfs() {
+  local squashfs_file="$1"
+  local kernel_file="$2"
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
+  local mount_point="$WORKDIR/squashfs_mount"
+  local wrapper_dir="$WORKDIR/wrapper_initramfs"
+  local orig_initramfs_dir="$WORKDIR/orig_initramfs"
+  mkdir -p "$mount_point" "$wrapper_dir" "$orig_initramfs_dir"
+  mount -o loop,ro "$squashfs_file" "$mount_point" || error "Failed to mount squashfs for wrapper creation"
+  local initramfs_file=""
+  if [[ -f "$mount_point/boot/initramfs-$kernel_version.img" ]]; then
+    initramfs_file="$mount_point/boot/initramfs-$kernel_version.img"
+  elif [[ -f "$mount_point/boot/initrd-$kernel_version.img" ]]; then
+    initramfs_file="$mount_point/boot/initrd-$kernel_version.img"
+  elif [[ -f "$mount_point/boot/initramfs-$kernel_version" ]]; then
+    initramfs_file="$mount_point/boot/initramfs-$kernel_version"
+  elif [[ -f "$mount_point/boot/initrd-$kernel_version" ]]; then
+    initramfs_file="$mount_point/boot/initrd-$kernel_version"
+  elif [[ -f "$mount_point/boot/initramfs.img-$kernel_version" ]]; then
+    initramfs_file="$mount_point/boot/initramfs.img-$kernel_version"
+  elif [[ -f "$mount_point/boot/initrd.img-$kernel_version" ]]; then
+    initramfs_file="$mount_point/boot/initrd.img-$kernel_version"
+  fi
+
+  [[ -z "$initramfs_file" ]] && error "Could not find initramfs in squashfs"
+  info "Extracting original initramfs..."
+  if file "$initramfs_file" | grep -q gzip; then
+    (cd "$orig_initramfs_dir" && gunzip -c "$initramfs_file" | cpio -idm) || error "Failed to extract initramfs"
+  else
+    (cd "$orig_initramfs_dir" && cpio -idm < "$initramfs_file") || error "Failed to extract initramfs"
+  fi
+
+  [[ -f "$orig_initramfs_dir/init" ]] || error "No init found in original initramfs"
+  mv "$orig_initramfs_dir/init" "$orig_initramfs_dir/initog"
+  cat >"$wrapper_dir/init" <<'WRAPPEOF'
+#!/busyboxw
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devtmpfs devtmpfs /dev || true
+for f in /modules/*.ko; do
+    insmod $f || true
+done
+exec /initog
+WRAPPEOF
+
+  chmod +x "$wrapper_dir/init"
+  if [ -f "$BUSYBOX" ]; then
+    cp "$BUSYBOX" "$wrapper_dir/busyboxw"
+  else
+    cp "$(command -v busybox)" "$wrapper_dir/busyboxw"
+  fi
+
+  mkdir -p "$wrapper_dir/modules"
+  extract_dm_modules "$(dirname "$squashfs_file")/system.sfs" "$kernel_file" "$wrapper_dir/modules"
+  mkdir -p "$wrapper_dir/wrapper_root"
+  mkdir -p "$wrapper_dir/{proc,sys,dev}"
+  (cd "$wrapper_dir" && find . | cpio -o -H newc | gzip -c) > "$WORKDIR/iso/live/init.img" || error "Failed to create wrapper initramfs"
+  umount "$mount_point"
+  rm -rf "$orig_initramfs_dir" "$wrapper_dir"
 }
 
 create_squashfs() {
@@ -552,6 +662,8 @@ main() {
     error "Invalid rootfs type"
   fi
   extract_modules "$squashfs_file" "$kernel_file" "$iso_root/extras"
+  info "Creating wrapper initramfs..."
+  create_wrapper_initramfs "$squashfs_file" "$kernel_file"
   info "Adding extra files/directories"
   if [[ -n "$EXTRA_FILES" ]]; then
     for f in $EXTRA_FILES; do
