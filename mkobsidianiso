@@ -26,7 +26,7 @@ info() {
 cleanup() {
   info "Cleaning up..."
   umount "$WORKDIR" || true
-  umount "$WORKDIR/"* || true
+  umount "$WORKDIR/squashfs_mount" || true
   rm -rf "$WORKDIR"
 }
 
