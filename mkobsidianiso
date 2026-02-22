@@ -26,6 +26,7 @@ info() {
 cleanup() {
   info "Cleaning up..."
   umount "$WORKDIR" || true
+  umount "$WORKDIR/"* || true
   rm -rf "$WORKDIR"
 }
 
