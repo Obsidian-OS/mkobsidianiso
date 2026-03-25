@@ -439,12 +439,11 @@ main() {
     "initramfs_img_prefix") initrd_src="/boot/initramfs.img-$kver" ;;
     "initrd_img_prefix")    initrd_src="/boot/initrd.img-$kver" ;;
   esac
-  # Copy dracut's initramfs (built with dmsquash-live module) to the ISO boot dir
+
   info "Copying dracut initramfs: $initrd_src"
   cp "$extract_mount$initrd_src" "$iso_root/boot/" || error "Failed to copy initramfs to ISO"
   umount "$extract_mount"
 
-  # Use basename so extract_modules and grub_cfg reference the right filename
   kernel_file="$kernel_basename"
 
   extract_modules "$squashfs_file" "$kernel_file" "$iso_root/extras"
