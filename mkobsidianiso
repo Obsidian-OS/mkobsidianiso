@@ -380,16 +380,15 @@ create_grub_cfg() {
   cat >"$dest" <<EOF
 set default=0
 set timeout=10
-set root_param="root=LABEL=OBOS_$ISO_NAME"
 menuentry "$DISTRO" {
     echo "=> finding system image"
     search --no-floppy --set=root --file /live/system.sfs
     echo "=> mounting system image"
     loopback loop0 (\$root)/live/system.sfs
     echo "=> loading linux"
-    linux (loop0)/boot/$kernel_file \$root_param rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
+    linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT rdinit=/ventoy-init
     echo "=> loading initramfs"
-    initrd (loop0)$initrd_path
+    initrd (loop0)$initrd_path (\$root)/ventoy.cpio
     echo "=> booting"
     boot
 }
@@ -401,9 +400,9 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/$kernel_file \$root_param ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT rdinit=/ventoy-init
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd (loop0)$initrd_path (\$root)/ventoy.cpio
         echo "=> booting"
         boot
     }
@@ -414,9 +413,9 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/$kernel_file \$root_param ro $nontoramline $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro $nontoramline $EXTRA_BOOT_OPT rdinit=/ventoy-init
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd (loop0)$initrd_path (\$root)/ventoy.cpio
         echo "=> booting"
         boot
     }
@@ -427,9 +426,9 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/$kernel_file \$root_param ro obsidian.debug $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro obsidian.debug $EXTRA_BOOT_OPT rdinit=/ventoy-init
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd (loop0)$initrd_path (\$root)/ventoy.cpio
         echo "=> booting"
         boot
     }
@@ -440,9 +439,9 @@ submenu 'Advanced Options for $DISTRO' {
         echo "=> mounting system image"
         loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-        linux (loop0)/boot/$kernel_file \$root_param ro nomodeset $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file root=LABEL=OBOS_$ISO_NAME ro nomodeset $EXTRA_BOOT_OPT rdinit=/ventoy-init
         echo "=> loading initramfs"
-        initrd (loop0)$initrd_path
+        initrd (loop0)$initrd_path (\$root)/ventoy.cpio
         echo "=> booting"
         boot
     }
@@ -566,6 +565,7 @@ main() {
     done
   fi
   info "Installing busybox..."
+  mkdir -p "$iso_root/bin"
   if [ -f "$BUSYBOX" ]; then
     cp "$BUSYBOX" "$iso_root/sbin/busybox"
   else
@@ -575,6 +575,10 @@ main() {
       error "busybox not found. Please install busybox-static. Or run $(curl -fsSL https://files.obsidianos.xyz/~odd/static/busybox -o /usr/bin/)"
     fi
   fi
+  for applet in $("$iso_root/sbin/busybox" --list); do
+    [ "$applet" = "init" ] && continue
+    ln -sf /sbin/busybox "$iso_root/bin/$applet"
+  done
   mkdir -p "$iso_root/boot/memtest"
   [ -f "$MEMTEST_EFI" ] && cp "$MEMTEST_EFI" "$iso_root/boot/memtest/memtest.efi"
   info "Creating init script..."
@@ -594,6 +598,21 @@ BUG_REPORT_URL=""
 PRIVACY_POLICY_URL=""
 LOGO=obsidianos
 EOF
+
+  info "Adding Ventoy support..."
+  cat >"$WORKDIR/ventoy-init" << 'EOF'
+#!/bin/sh
+for mod in dm-mod dm-bufio dm-snapshot; do
+    for ko in /lib/modules/*/kernel/drivers/md/${mod}.ko; do
+        insmod "$ko" 2>/dev/null && break
+    done
+done
+exec /init "$@"
+EOF
+  chmod +x "$WORKDIR/ventoy-init"
+  pushd "$WORKDIR"
+  find "ventoy-init" | cpio -o -H newc > "$iso_root/ventoy.cpio"
+  popd
   info "Creating GRUB configuration..."
   create_grub_cfg "$iso_root/boot/grub/grub.cfg" "$kernel_file" "$rootfs"
   info "Adding extra binaries"
