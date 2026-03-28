@@ -25,10 +25,7 @@ info() {
 
 cleanup() {
   info "Cleaning up..."
-  umount "$WORKDIR/sfs_extract" 2>/dev/null || true
-  umount "$WORKDIR/module_mount" 2>/dev/null || true
-  umount "$WORKDIR/detect_mount" 2>/dev/null || true
-  umount "$WORKDIR" 2>/dev/null || true
+  umount "$WORKDIR" || true
   rm -rf "$WORKDIR"
 }
 
@@ -147,7 +144,7 @@ extract_modules() {
     mount_needed=true
     rootfs="$mount_point"
   fi
-  local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file")
   local mod_dir="$rootfs/lib/modules/$kernel_version/kernel"
   [[ ! -d "$mod_dir" ]] && error "Kernel modules not found at $mod_dir"
   info "Extracting kernel modules..."
@@ -198,6 +195,152 @@ extract_modules() {
   fi
 }
 
+create_init_script() {
+  local dest="$1"
+  cat >"$dest" <<'INITEOF'
+#!/sbin/busybox sh
+clear
+echo "=> mkobsidianiso"
+get_opt() {
+    local val=$(cat /proc/cmdline | tr ' ' '\n' | grep "^$1=" | cut -d= -f2-)
+    [ -n "$val" ] && echo "$val"
+}
+
+has_opt() {
+    grep -q "\<$1\>" /proc/cmdline
+}
+echo "=> inserting kernel modules"
+if has_opt "obsidian.safemode"; then
+    echo "!!! SAFE MODE ENABLED !!!"
+    insmod /extras/loop.ko || true
+    insmod /extras/squashfs.ko || true
+    insmod /extras/overlay.ko || true
+else
+    for f in /extras/*.ko; do
+        insmod $f || true  # i am sorry but i needed the OR true
+    done
+fi
+if has_opt "obsidian.serial"; then
+    exec > /dev/ttyS0 2>&1
+fi
+echo "=> setting up loopback device"
+mknod /dev/loop0 b 7 0 2>/dev/null
+if has_opt "obsidian.toram"; then
+    echo "=> copying system to RAM (this may take a moment)..."
+    mount -t tmpfs tmpfs /tmp 2>/dev/null
+    SIZE=$(stat -c%s "/live/system.sfs")
+    SRC="/live/system.sfs"
+    if [ -f "$SRC" ]; then
+        SIZE=$(stat -c%s "$SRC")
+        echo "=> relocating $((SIZE / 1024 / 1024 / 1024))GiB to RAM..."
+        cp "$SRC" "/tmp/system.sfs" &
+        CP_PID=$!
+        while kill -0 $CP_PID 2>/dev/null; do
+            CUR=$(stat -c%s "/tmp/system.sfs" 2>/dev/null || echo 0)
+            PCT=$(( 100 * $CUR / $SIZE ))
+            BAR_WIDTH=$(( PCT / 5 ))
+            BAR=$(printf "%${BAR_WIDTH}s" | tr ' ' '#')
+            printf "\r=> progress: [%-25s] %d%%" "$BAR" "$PCT"
+            sleep 0.1
+        done
+        echo -e "\n=> copy complete. mounting from RAM..."
+    fi
+    losetup /dev/loop0 /tmp/system.sfs
+else
+    losetup /dev/loop0 /live/system.sfs
+fi
+echo "=> mounting overlay"
+mkdir -p /lower /upper /work /newroot 2>/dev/null
+mount -t squashfs /dev/loop0 /lower 2>/dev/null
+mount -t tmpfs tmpfs /upper 2>/dev/null
+mkdir -p /upper/upper /upper/work 2>/dev/null
+mount -t overlay overlay -o lowerdir=/lower,upperdir=/upper/upper,workdir=/upper/work /newroot 2>/dev/null
+echo "=> moving essential mounts"
+mount --move /dev /newroot/dev 2>/dev/null
+mount -t proc proc /newroot/proc
+mount -t sysfs sysfs /newroot/sys
+NEW_HOST=$(get_opt "obsidian.hostname")
+if [ -n "$NEW_HOST" ]; then
+    echo "$NEW_HOST" > /newroot/etc/hostname
+fi
+echo "=> changing root"
+cd /newroot
+if has_opt "obsidian.debug"; then
+    echo "!!! DEBUG MODE DETECTED !!!"
+    /sbin/busybox sh
+fi
+pivot_root . tmp || (echo "=> ERROR: UNABLE TO PIVOT ROOT (VERY CRITICAL!!!)" && sleep 1000)
+echo "=> mounting the live CD at /mnt/livecd"
+mkdir -p /mnt/livecd
+mount --move /tmp/ /mnt/livecd
+echo "=> bind-mounting extra files recursively"
+if has_opt "obsidian.debug"; then
+    echo "!!! DEBUG MODE DETECTED !!!"
+    /sbin/busybox sh
+fi
+_bind_mount() {
+  local src_path="$1"
+  local dst_path="$2"
+  if [ -f "$src_path" ]; then
+    if [ -d "$dst_path" ]; then
+      echo "=> WARN: cannot bind file $src_path to existing directory $dst_path. skipping." >&2
+      return 1
+    fi
+    [ ! -e "$dst_path" ] && touch "$dst_path"
+    if ! mount --bind "$src_path" "$dst_path"; then
+      echo "=> ERROR: failed to bind-mount file $src_path to $dst_path" >&2
+      return 1
+    fi
+  elif [ -d "$src_path" ]; then
+    if [ -e "$dst_path" ]; then
+      if [ -d "$dst_path" ]; then
+        for item in "$src_path"/*; do
+          local item_name=${item#/mnt/livecd/extras/files/}
+          _bind_mount "$item" "$item_name"
+          if [ $? -ne 0 ]; then return 1; fi
+        done
+      else
+        echo "=> WARN: cannot bind directory $src_path to existing non-directory $dst_path. skipping." >&2
+        return 1
+      fi
+    else
+      mkdir -p "$dst_path"
+      if ! mount --bind "$src_path" "$dst_path"; then
+        echo "=> ERROR: failed to bind-mount directory $src_path to $dst_path" >&2
+        return 1
+      fi
+    fi
+  else
+    echo "=> WARN: source $src_path is neither a file nor a directory. skipping." >&2
+    return 0
+  fi
+  return 0
+}
+if has_opt "obsidian.nobind" || has_opt "obsidian.safemode"; then
+    echo "=> skipping extra files"
+else
+    for f in /mnt/livecd/extras/files/*; do
+      filename="${f#/mnt/livecd/extras/files/}"
+      target="/${filename%/}"
+      _bind_mount "$f" "$target" || sleep 1000
+    done
+fi
+echo "=> symlinking (forcefully!) system image to /etc/system.sfs"
+ln -sf /mnt/livecd/live/system.sfs /etc/system.sfs || (echo "=> ERROR: UNABLE TO SYMLINK SYSTEM IMAGE" && sleep 1000)
+echo "=> symlinking extra binaries"
+for f in /mnt/livecd/extras/binaries/*; do
+    [ -f "$f" ] || (echo "=> WARN: skipping $f due to not being a file"; continue)
+    ln -sf "$f" /usr/bin/
+done
+echo "=> giving the job to the system. bye from mkobsidianiso"
+if has_opt "obsidian.shell"; then
+    echo "=> dropping to shell before switching to the system. type 'exit' to continue boot."
+    /sbin/busybox sh
+fi
+exec /sbin/init
+INITEOF
+  chmod +x "$dest"
+}
 
 get_kernel_version_from_file() {
   local kernel_file="$1"
@@ -211,7 +354,7 @@ get_kernel_version_from_file() {
 create_grub_cfg() {
   local dest="$1"
   local kernel_file="$2"
-  local initrd_path="$3"
+  local rootfs="$3"
   local toramline=""
   local nontoramline=""
   if [[ "$ENABLE_TORAM" == "1" ]]; then
@@ -221,19 +364,32 @@ create_grub_cfg() {
     toramline=""
     nontoramline="obsidian.toram"
   fi
-  local kernel_basename=$(basename "$kernel_file")
-  local initrd_basename=$(basename "$initrd_path")
+  kernel_file=$(echo $kernel_file | xargs basename)
+  local kernel_version=$(get_kernel_version_from_file "$kernel_file" h)
+  local initramfs_format=$(detect_initramfs_format "$rootfs" "$kernel_file")
+  [[ -z "$initramfs_format" ]] && error "Could not detect initramfs format for kernel $kernel_version"
+  local initrd_path=""
+  case "$initramfs_format" in
+  "initramfs") initrd_path="/boot/initramfs-$kernel_version.img" ;;
+  "initrd") initrd_path="/boot/initrd-$kernel_version.img" ;;
+  "initramfs_no_ext") initrd_path="/boot/initramfs-$kernel_version" ;;
+  "initrd_no_ext") initrd_path="/boot/initrd-$kernel_version" ;;
+  "initramfs_img_prefix") initrd_path="/boot/initramfs.img-$kernel_version" ;;
+  "initrd_img_prefix") initrd_path="/boot/initrd.img-$kernel_version" ;;
+  esac
   cat >"$dest" <<EOF
 set default=0
 set timeout=10
+set root_param="root=LABEL=OBOS_$ISO_NAME"
 menuentry "$DISTRO" {
     echo "=> finding system image"
-    search --no-floppy --set=root --label "OBOS_$ISO_NAME"
+    search --no-floppy --set=root --file /live/system.sfs
+    echo "=> mounting system image"
+    loopback loop0 (\$root)/live/system.sfs
     echo "=> loading linux"
-    linux /boot/$kernel_basename root=live:LABEL=OBOS_$ISO_NAME rd.live.dir=/LiveOS rd.live.squashimg=squashfs.img rootfstype=auto ro $toramline $EXTRA_BOOT_OPT
-
+    linux (loop0)/boot/$kernel_file \$root_param rootfstype=iso9660 ro $toramline $EXTRA_BOOT_OPT
     echo "=> loading initramfs"
-    initrd /boot/$initrd_basename
+    initrd (loop0)$initrd_path
     echo "=> booting"
     boot
 }
@@ -241,47 +397,52 @@ menuentry "$DISTRO" {
 submenu 'Advanced Options for $DISTRO' {
     menuentry "$DISTRO (Safe Mode)" {
         echo "=> finding system image"
-        search --no-floppy --set=root --label "OBOS_$ISO_NAME"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-    linux /boot/$kernel_basename root=live:LABEL=OBOS_$ISO_NAME rd.live.dir=/LiveOS rd.live.squashimg=squashfs.img rootfstype=auto ro rd.live.debug=1 $EXTRA_BOOT_OPT
+        linux (loop0)/boot/$kernel_file \$root_param ro obsidian.safemode obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd /boot/$initrd_basename
+        initrd (loop0)$initrd_path
         echo "=> booting"
         boot
     }
 
     menuentry "$DISTRO (ToRAM Toggle)" {
         echo "=> finding system image"
-        search --no-floppy --set=root --label "OBOS_$ISO_NAME"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-    linux /boot/$kernel_basename root=live:LABEL=OBOS_$ISO_NAME rd.live.dir=/LiveOS rd.live.squashimg=squashfs.img rootfstype=auto ro $nontoramline $EXTRA_BOOT_OPT
-
+        linux (loop0)/boot/$kernel_file \$root_param ro $nontoramline $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd /boot/$initrd_basename
+        initrd (loop0)$initrd_path
         echo "=> booting"
         boot
     }
 
     menuentry "$DISTRO (Debug Mode)" {
         echo "=> finding system image"
-        search --no-floppy --set=root --label "OBOS_$ISO_NAME"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-    linux /boot/$kernel_basename root=live:LABEL=OBOS_$ISO_NAME rd.live.dir=/LiveOS rd.live.squashimg=squashfs.img rootfstype=auto ro rd.live.debug=1 $EXTRA_BOOT_OPT
-
+        linux (loop0)/boot/$kernel_file \$root_param ro obsidian.debug $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd /boot/$initrd_basename
+        initrd (loop0)$initrd_path
         echo "=> booting"
         boot
     }
 
     menuentry "$DISTRO (No Modeset - Basic Graphics)" {
         echo "=> finding system image"
-        search --no-floppy --set=root --label "OBOS_$ISO_NAME"
+        search --no-floppy --set=root --file /live/system.sfs
+        echo "=> mounting system image"
+        loopback loop0 (\$root)/live/system.sfs
         echo "=> loading linux"
-    linux /boot/$kernel_basename root=live:LABEL=OBOS_$ISO_NAME rd.live.dir=/LiveOS rd.live.squashimg=squashfs.img rootfstype=auto ro nomodeset $EXTRA_BOOT_OPT
-
+        linux (loop0)/boot/$kernel_file \$root_param ro nomodeset $EXTRA_BOOT_OPT
         echo "=> loading initramfs"
-        initrd /boot/$initrd_basename
+        initrd (loop0)$initrd_path
         echo "=> booting"
         boot
     }
@@ -317,7 +478,6 @@ submenu 'System Utilities...' {
 $EXTRA_GRUB_CONFIG
 EOF
 }
-
 
 create_squashfs() {
   local src="$1"
@@ -381,8 +541,8 @@ main() {
   fi
   info "Using kernel file: $kernel_file"
   local iso_root="$WORKDIR/iso"
-  mkdir -p "$iso_root"/{boot/grub,extras/binaries,extras/files,LiveOS,dev,proc,sys,newroot,lower,upper/{work,upper},work,tmp}
-  local squashfs_file="$iso_root/LiveOS/squashfs.img"
+  mkdir -p "$iso_root"/{boot/grub,sbin,extras/binaries,extras/files,live,dev,proc,sys,newroot,lower,upper/{work,upper},work,tmp}
+  local squashfs_file="$iso_root/live/system.sfs"
   if [[ -d "$rootfs" ]]; then
     create_squashfs "$rootfs" "$squashfs_file"
   elif [[ -f "$rootfs" ]]; then
@@ -391,61 +551,6 @@ main() {
   else
     error "Invalid rootfs type"
   fi
-
-  # Extract kernel and initramfs from the squashfs onto the ISO directly.
-  # The kernel must live on the ISO itself (not inside the squashfs loopback)
-  # so that GRUB can load it, and so the custom init script handles the boot
-  # instead of dracut trying to mount /sysroot and failing.
-  info "Extracting kernel and initramfs from squashfs to ISO boot directory..."
-  local extract_mount="$WORKDIR/sfs_extract"
-  mkdir -p "$extract_mount"
-  mount -o loop,ro "$squashfs_file" "$extract_mount" || error "Failed to mount squashfs for kernel extraction"
-
-  # Re-detect kernel from inside the mounted squashfs. detect_kernel's earlier
-  # mount was already unmounted so kernel_file may point to a stale path.
-  local kernel_in_sfs
-  kernel_in_sfs=$(ls "$extract_mount"/boot/vmlinuz-* 2>/dev/null | head -n1)
-  if [[ -z "$kernel_in_sfs" ]]; then
-    kernel_in_sfs=$(ls "$extract_mount"/boot/vmlinuz* 2>/dev/null | head -n1)
-  fi
-  if [[ -z "$kernel_in_sfs" ]]; then
-    kernel_in_sfs=$(ls "$extract_mount"/boot/kernel-* 2>/dev/null | head -n1)
-  fi
-  if [[ -z "$kernel_in_sfs" ]]; then
-    kernel_in_sfs=$(ls "$extract_mount"/boot/kernel* 2>/dev/null | head -n1)
-  fi
-  [[ -z "$kernel_in_sfs" ]] && error "Could not find kernel inside squashfs at $extract_mount/boot/"
-
-  local kernel_basename
-  kernel_basename=$(basename "$kernel_in_sfs")
-  local kver
-  kver=$(get_kernel_version_from_file "$kernel_basename" h)
-  [[ -z "$kver" ]] && error "Could not determine kernel version from filename: $kernel_basename"
-  info "Kernel: $kernel_basename  Version: $kver"
-
-  local initramfs_format
-  initramfs_format=$(detect_initramfs_format "$extract_mount" "$kernel_basename")
-  [[ -z "$initramfs_format" ]] && error "Could not detect initramfs format for kernel $kver"
-  info "Initramfs format: $initramfs_format"
-
-  cp "$extract_mount/boot/$kernel_basename" "$iso_root/boot/" || error "Failed to copy kernel to ISO"
-
-  local initrd_src=""
-  case "$initramfs_format" in
-    "initramfs")            initrd_src="/boot/initramfs-$kver.img" ;;
-    "initrd")               initrd_src="/boot/initrd-$kver.img" ;;
-    "initramfs_no_ext")     initrd_src="/boot/initramfs-$kver" ;;
-    "initrd_no_ext")        initrd_src="/boot/initrd-$kver" ;;
-    "initramfs_img_prefix") initrd_src="/boot/initramfs.img-$kver" ;;
-    "initrd_img_prefix")    initrd_src="/boot/initrd.img-$kver" ;;
-  esac
-
-  info "Copying dracut initramfs: $initrd_src"
-  cp "$extract_mount$initrd_src" "$iso_root/boot/" || error "Failed to copy initramfs to ISO"
-  umount "$extract_mount"
-
-  kernel_file="$kernel_basename"
-
   extract_modules "$squashfs_file" "$kernel_file" "$iso_root/extras"
   info "Adding extra files/directories"
   if [[ -n "$EXTRA_FILES" ]]; then
@@ -460,9 +565,20 @@ main() {
       cp -r "$f" "$dest_parent_dir/" || error "Failed to copy $f"
     done
   fi
+  info "Installing busybox..."
+  if [ -f "$BUSYBOX" ]; then
+    cp "$BUSYBOX" "$iso_root/sbin/busybox"
+  else
+    if command -v busybox &>/dev/null; then
+      cp "$(command -v busybox)" "$iso_root/sbin/"
+    else
+      error "busybox not found. Please install busybox-static. Or run $(curl -fsSL https://files.obsidianos.xyz/~odd/static/busybox -o /usr/bin/)"
+    fi
+  fi
   mkdir -p "$iso_root/boot/memtest"
   [ -f "$MEMTEST_EFI" ] && cp "$MEMTEST_EFI" "$iso_root/boot/memtest/memtest.efi"
-
+  info "Creating init script..."
+  create_init_script "$iso_root/sbin/init"
   info "Creating os-release"
   mkdir -p "$iso_root/etc/"
   cat >"$iso_root/etc/os-release" <<'EOF'
@@ -479,7 +595,7 @@ PRIVACY_POLICY_URL=""
 LOGO=obsidianos
 EOF
   info "Creating GRUB configuration..."
-  create_grub_cfg "$iso_root/boot/grub/grub.cfg" "$kernel_file" "$initrd_src"
+  create_grub_cfg "$iso_root/boot/grub/grub.cfg" "$kernel_file" "$rootfs"
   info "Adding extra binaries"
   cp $BINARIES "$iso_root/extras/binaries/" || true
   info "Building ISO with grub-mkrescue..."
